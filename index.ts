@@ -21,33 +21,21 @@ export default (async (ctx) => {
     const toolParametersCache = new Map<string, any>() // callID -> parameters
     const janitor = new Janitor(ctx.client, stateManager, logger, toolParametersCache)
 
-    // Store the original global fetch
+    // Lightweight global fetch wrapper that only caches tool parameters so Janitor can display
+    // meaningful metadata even if the plugin loads mid-session before chat.params runs.
     const originalGlobalFetch = globalThis.fetch
-
-    // Wrap globalThis.fetch to intercept ALL fetch calls
-    // This works because even if auth providers set a custom fetch,
-    // they ultimately call fetch() which goes through globalThis.fetch
     globalThis.fetch = async (input: any, init?: any) => {
-        // Check if this looks like an AI API request by examining the body
         if (init?.body && typeof init.body === 'string') {
             try {
                 const body = JSON.parse(init.body)
-
-                // Only process requests that have a messages array (AI requests)
                 if (body.messages && Array.isArray(body.messages)) {
-                    logger.info("global-fetch", "🔥 AI REQUEST INTERCEPTED via global fetch!", {
-                        url: typeof input === 'string' ? input.substring(0, 80) : 'URL object',
-                        messageCount: body.messages.length
-                    })
-
-                    // Capture tool call parameters from assistant messages
                     const assistantMessages = body.messages.filter((m: any) => m.role === 'assistant')
                     for (const msg of assistantMessages) {
                         if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
                             for (const toolCall of msg.tool_calls) {
                                 if (toolCall.id && toolCall.function) {
                                     try {
-                                        const params = typeof toolCall.function.arguments === 'string' 
+                                        const params = typeof toolCall.function.arguments === 'string'
                                             ? JSON.parse(toolCall.function.arguments)
                                             : toolCall.function.arguments
                                         toolParametersCache.set(toolCall.id, {
@@ -60,73 +48,18 @@ export default (async (ctx) => {
                                             hasParams: !!params
                                         })
                                     } catch (e) {
-                                        // Ignore JSON parse errors
+                                        // Ignore JSON parse errors for individual tool calls
                                     }
                                 }
-                            }
-                        }
-                    }
-
-                    // Try to extract session ID from the request (might be in headers or we track it)
-                    // For now, we'll use a simpler approach: collect ALL pruned IDs from all sessions
-                    // This is safe because tool_call_ids are globally unique
-
-                    const toolMessages = body.messages.filter((m: any) => m.role === 'tool')
-
-                    if (toolMessages.length > 0) {
-                        logger.debug("global-fetch", "Found tool messages in request", {
-                            toolMessageCount: toolMessages.length,
-                            toolCallIds: toolMessages.map((m: any) => m.tool_call_id).slice(0, 5)
-                        })
-
-                        // Collect all pruned IDs across all sessions, excluding subagent sessions
-                        const allSessions = await ctx.client.session.list()
-                        const allPrunedIds = new Set<string>()
-
-                        if (allSessions.data) {
-                            for (const session of allSessions.data) {
-                                // Skip subagent sessions (don't log - it's normal and would spam logs)
-                                if (session.parentID) {
-                                    continue
-                                }
-                                
-                                const prunedIds = await stateManager.get(session.id)
-                                prunedIds.forEach(id => allPrunedIds.add(id))
-                            }
-                        }
-
-                        if (allPrunedIds.size > 0) {
-                            let replacedCount = 0
-                            body.messages = body.messages.map((m: any) => {
-                                if (m.role === 'tool' && allPrunedIds.has(m.tool_call_id)) {
-                                    replacedCount++
-                                    return {
-                                        ...m,
-                                        content: '[Output removed to save context - information superseded or no longer needed]'
-                                    }
-                                }
-                                return m
-                            })
-
-                            if (replacedCount > 0) {
-                                logger.info("global-fetch", "✂️ Replaced pruned tool messages", {
-                                    totalPrunedIds: allPrunedIds.size,
-                                    replacedCount: replacedCount,
-                                    totalMessages: body.messages.length
-                                })
-
-                                // Update the request body with modified messages
-                                init.body = JSON.stringify(body)
                             }
                         }
                     }
                 }
             } catch (e) {
-                // Not a JSON body or not an AI request, ignore
+                // Ignore parse errors and fall through to original fetch
             }
         }
 
-        // Call the original fetch
         return originalGlobalFetch(input, init)
     }
 
@@ -144,7 +77,7 @@ export default (async (ctx) => {
             if (event.type === "session.status" && event.properties.status.type === "idle") {
                 // Get session info to check if it's a subagent
                 const result = await ctx.client.session.get({ path: { id: event.properties.sessionID } })
-                
+
                 // Skip pruning for subagent sessions
                 if (result.data?.parentID) {
                     logger.debug("event", "Skipping janitor for subagent session", {
@@ -177,7 +110,7 @@ export default (async (ctx) => {
 
             // Get session info to check if it's a subagent
             const result = await ctx.client.session.get({ path: { id: sessionId } })
-            
+
             // Skip pruning for subagent sessions
             if (result.data?.parentID) {
                 logger.debug("chat.params", "Skipping context pruning for subagent session", {
@@ -217,19 +150,50 @@ export default (async (ctx) => {
                     prunedIds: prunedIds.length > 0 ? prunedIds : undefined
                 })
 
-                // Log request body details before filtering
-                if (init?.body) {
+                // Parse the request body once if possible for logging, caching, and filtering
+                let parsedBody: any | undefined
+                if (init?.body && typeof init.body === 'string') {
                     try {
-                        const bodyPreview = JSON.parse(init.body as string)
-                        const toolMessages = bodyPreview.messages?.filter((m: any) => m.role === 'tool') || []
-                        logger.debug("pruning-fetch", "Request body before filtering", {
-                            sessionId,
-                            totalMessages: bodyPreview.messages?.length || 0,
-                            toolMessages: toolMessages.length,
-                            toolCallIds: toolMessages.map((m: any) => m.tool_call_id)
-                        })
+                        parsedBody = JSON.parse(init.body)
                     } catch (e) {
-                        // Ignore parse errors here
+                        // Ignore parse errors; we'll skip caching/filtering in this case
+                    }
+                }
+
+                if (parsedBody?.messages) {
+                    const toolMessages = parsedBody.messages.filter((m: any) => m.role === 'tool') || []
+                    logger.debug("pruning-fetch", "Request body before filtering", {
+                        sessionId,
+                        totalMessages: parsedBody.messages.length,
+                        toolMessages: toolMessages.length,
+                        toolCallIds: toolMessages.map((m: any) => m.tool_call_id)
+                    })
+
+                    // Capture tool call parameters from assistant messages so Janitor toast metadata stays rich
+                    const assistantMessages = parsedBody.messages.filter((m: any) => m.role === 'assistant')
+                    for (const msg of assistantMessages) {
+                        if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+                            for (const toolCall of msg.tool_calls) {
+                                if (toolCall.id && toolCall.function) {
+                                    try {
+                                        const params = typeof toolCall.function.arguments === 'string'
+                                            ? JSON.parse(toolCall.function.arguments)
+                                            : toolCall.function.arguments
+                                        toolParametersCache.set(toolCall.id, {
+                                            tool: toolCall.function.name,
+                                            parameters: params
+                                        })
+                                        logger.debug("pruning-fetch", "Cached tool parameters", {
+                                            callID: toolCall.id,
+                                            tool: toolCall.function.name,
+                                            hasParams: !!params
+                                        })
+                                    } catch (e) {
+                                        // Ignore JSON parse errors on tool arguments
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -238,58 +202,63 @@ export default (async (ctx) => {
 
                 // Only attempt filtering if there are pruned IDs and a request body exists
                 if (prunedIds.length > 0 && init?.body) {
-                    try {
-                        // Parse the request body (expected to be JSON)
-                        const body = JSON.parse(init.body as string)
-                        const originalMessageCount = body.messages?.length || 0
+                    let body = parsedBody
 
-                        if (body.messages && Array.isArray(body.messages)) {
-                            // Replace tool response messages whose tool_call_id is in the pruned list
-                            // with a short placeholder message instead of removing them entirely.
-                            // This preserves the message structure and avoids API validation errors.
-                            body.messages = body.messages.map((m: any) => {
-                                if (m.role === 'tool' && prunedIds.includes(m.tool_call_id)) {
-                                    prunedThisRequest++
-                                    return {
-                                        ...m,
-                                        content: '[Output removed to save context - information superseded or no longer needed]'
-                                    }
+                    if (!body && typeof init.body === 'string') {
+                        try {
+                            body = JSON.parse(init.body)
+                        } catch (error: any) {
+                            logger.error("pruning-fetch", "Failed to parse/filter request body", {
+                                sessionId,
+                                error: error.message,
+                                stack: error.stack
+                            })
+                            return existingFetch(fetchInput, init)
+                        }
+                    }
+
+                    if (body?.messages && Array.isArray(body.messages)) {
+                        const originalMessageCount = body.messages.length
+
+                        // Replace tool response messages whose tool_call_id is in the pruned list
+                        // with a short placeholder message instead of removing them entirely.
+                        // This preserves the message structure and avoids API validation errors.
+                        body.messages = body.messages.map((m: any) => {
+                            if (m.role === 'tool' && prunedIds.includes(m.tool_call_id)) {
+                                prunedThisRequest++
+                                return {
+                                    ...m,
+                                    content: '[Output removed to save context - information superseded or no longer needed]'
                                 }
-                                return m
+                            }
+                            return m
+                        })
+
+                        if (prunedThisRequest > 0) {
+                            logger.info("pruning-fetch", "Replaced pruned tool messages", {
+                                sessionId,
+                                totalMessages: originalMessageCount,
+                                replacedCount: prunedThisRequest,
+                                prunedIds
                             })
 
-                            if (prunedThisRequest > 0) {
-                                logger.info("pruning-fetch", "Replaced pruned tool messages", {
-                                    sessionId,
-                                    totalMessages: originalMessageCount,
-                                    replacedCount: prunedThisRequest,
-                                    prunedIds
-                                })
+                            // Log remaining tool messages
+                            const remainingToolMessages = body.messages.filter((m: any) => m.role === 'tool')
+                            logger.debug("pruning-fetch", "Tool messages after replacement", {
+                                sessionId,
+                                totalToolCount: remainingToolMessages.length,
+                                toolCallIds: remainingToolMessages.map((m: any) => m.tool_call_id)
+                            })
 
-                                // Log remaining tool messages
-                                const remainingToolMessages = body.messages.filter((m: any) => m.role === 'tool')
-                                logger.debug("pruning-fetch", "Tool messages after replacement", {
-                                    sessionId,
-                                    totalToolCount: remainingToolMessages.length,
-                                    toolCallIds: remainingToolMessages.map((m: any) => m.tool_call_id)
-                                })
-
-                                // Update the request body with modified messages
-                                init.body = JSON.stringify(body)
-                            } else {
-                                logger.debug("pruning-fetch", "No messages replaced", {
-                                    sessionId,
-                                    messageCount: originalMessageCount
-                                })
-                            }
+                            // Update the request body with modified messages
+                            init.body = JSON.stringify(body)
+                            parsedBody = body
+                        } else {
+                            logger.debug("pruning-fetch", "No messages replaced", {
+                                sessionId,
+                                messageCount: originalMessageCount
+                            })
                         }
-                    } catch (error: any) {
-                        logger.error("pruning-fetch", "Failed to parse/filter request body", {
-                            sessionId,
-                            error: error.message,
-                            stack: error.stack
-                        })
-                        // Continue with original request if parsing fails - don't break the request
                     }
                 }
 
