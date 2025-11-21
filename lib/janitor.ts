@@ -1,5 +1,4 @@
 import { generateObject } from "ai"
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { z } from "zod"
 import type { Logger } from "./logger"
 import type { StateManager } from "./state"
