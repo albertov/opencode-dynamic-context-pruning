@@ -27,6 +27,7 @@ export interface ToolSettings {
     nudgeEnabled: boolean
     nudgeFrequency: number
     protectedTools: string[]
+    allowPruneInputs: string[]
     contextLimit: number | `${number}%`
     modelLimits?: Record<string, number | `${number}%`>
 }
@@ -118,6 +119,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "tools.settings.nudgeEnabled",
     "tools.settings.nudgeFrequency",
     "tools.settings.protectedTools",
+    "tools.settings.allowPruneInputs",
     "tools.settings.contextLimit",
     "tools.settings.modelLimits",
     "tools.distill",
@@ -353,6 +355,16 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     key: "tools.settings.protectedTools",
                     expected: "string[]",
                     actual: typeof tools.settings.protectedTools,
+                })
+            }
+            if (
+                tools.settings.allowPruneInputs !== undefined &&
+                !Array.isArray(tools.settings.allowPruneInputs)
+            ) {
+                errors.push({
+                    key: "tools.settings.allowPruneInputs",
+                    expected: "string[]",
+                    actual: typeof tools.settings.allowPruneInputs,
                 })
             }
             if (tools.settings.contextLimit !== undefined) {
@@ -612,6 +624,7 @@ const defaultConfig: PluginConfig = {
             nudgeEnabled: true,
             nudgeFrequency: 10,
             protectedTools: [...DEFAULT_PROTECTED_TOOLS],
+            allowPruneInputs: [],
             contextLimit: 100000,
         },
         distill: {
@@ -791,6 +804,12 @@ function mergeTools(
                     ...(override.settings?.protectedTools ?? []),
                 ]),
             ],
+            allowPruneInputs: [
+                ...new Set([
+                    ...base.settings.allowPruneInputs,
+                    ...(override.settings?.allowPruneInputs ?? []),
+                ]),
+            ],
             contextLimit: override.settings?.contextLimit ?? base.settings.contextLimit,
             modelLimits: override.settings?.modelLimits ?? base.settings.modelLimits,
         },
@@ -849,6 +868,7 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
             settings: {
                 ...config.tools.settings,
                 protectedTools: [...config.tools.settings.protectedTools],
+                allowPruneInputs: [...config.tools.settings.allowPruneInputs],
                 modelLimits: { ...config.tools.settings.modelLimits },
             },
             distill: { ...config.tools.distill },

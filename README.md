@@ -125,6 +125,11 @@ DCP uses its own config file:
 >             // },
 >             // Additional tools to protect from pruning
 >             "protectedTools": [],
+>             // Tool names whose inputs can still be pruned.
+>             // If a listed tool is also protected, it becomes eligible for
+>             // <prunable-tools> and /dcp sweep, but only input is redacted.
+>             // Protected tool outputs remain preserved.
+>             "allowPruneInputs": [],
 >         },
 >         // Distills key findings into preserved knowledge before removing raw content
 >         "distill": {
@@ -179,7 +184,7 @@ DCP provides a `/dcp` slash command:
 - `/dcp` — Shows available DCP commands
 - `/dcp context` — Shows a breakdown of your current session's token usage by category (system, user, assistant, tools, etc.) and how much has been saved through pruning.
 - `/dcp stats` — Shows cumulative pruning statistics across all sessions.
-- `/dcp sweep` — Prunes all tools since the last user message. Accepts an optional count: `/dcp sweep 10` prunes the last 10 tools. Respects `commands.protectedTools`.
+- `/dcp sweep` — Prunes all tools since the last user message. Accepts an optional count: `/dcp sweep 10` prunes the last 10 tools. Respects `commands.protectedTools`, except tools listed in `tools.settings.allowPruneInputs`.
 - `/dcp manual [on|off]` — Toggle manual mode or set explicit state. When on, the AI will not autonomously use context management tools.
 - `/dcp prune [focus]` — Trigger a single prune tool execution. Optional focus text directs the AI's pruning decisions.
 - `/dcp distill [focus]` — Trigger a single distill tool execution. Optional focus text directs what to distill.
@@ -191,6 +196,12 @@ By default, these tools are always protected from pruning:
 `task`, `todowrite`, `todoread`, `distill`, `compress`, `prune`, `batch`, `plan_enter`, `plan_exit`
 
 The `protectedTools` arrays in each section add to this default list.
+
+`tools.settings.allowPruneInputs` is an input-only override. For listed tools:
+
+- Inputs are redacted when pruned.
+- If the tool is also protected, it is still shown in `<prunable-tools>` and can be selected by `/dcp sweep`.
+- Protected tool outputs remain preserved.
 
 ### Config Precedence
 

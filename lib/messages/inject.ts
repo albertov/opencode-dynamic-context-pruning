@@ -179,14 +179,18 @@ export const buildPrunableToolsList = (
 ): string => {
     const lines: string[] = []
     const toolIdList = state.toolIdList
+    const allProtectedTools = config.tools.settings.protectedTools
+    const allowPruneInputs = new Set(config.tools.settings.allowPruneInputs)
 
     state.toolParameters.forEach((toolParameterEntry, toolCallId) => {
         if (state.prune.tools.has(toolCallId)) {
             return
         }
 
-        const allProtectedTools = config.tools.settings.protectedTools
-        if (allProtectedTools.includes(toolParameterEntry.tool)) {
+        if (
+            allProtectedTools.includes(toolParameterEntry.tool) &&
+            !allowPruneInputs.has(toolParameterEntry.tool)
+        ) {
             return
         }
 

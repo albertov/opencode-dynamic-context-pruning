@@ -126,6 +126,7 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
 
     const params = getCurrentParams(state, messages, logger)
     const protectedTools = config.commands.protectedTools
+    const allowPruneInputs = new Set(config.tools.settings.allowPruneInputs)
 
     syncToolCache(state, config, logger, messages)
     buildToolIdList(state, messages, logger)
@@ -171,7 +172,7 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
         if (!entry) {
             return true
         }
-        if (protectedTools.includes(entry.tool)) {
+        if (protectedTools.includes(entry.tool) && !allowPruneInputs.has(entry.tool)) {
             logger.debug(`Sweep: skipping protected tool ${entry.tool} (${id})`)
             return false
         }
@@ -189,7 +190,7 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
         if (!entry) {
             return false
         }
-        if (protectedTools.includes(entry.tool)) {
+        if (protectedTools.includes(entry.tool) && !allowPruneInputs.has(entry.tool)) {
             return true
         }
         const filePaths = getFilePathsFromParameters(entry.tool, entry.parameters)

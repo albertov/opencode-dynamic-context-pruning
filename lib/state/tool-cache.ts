@@ -20,6 +20,8 @@ export function syncToolCache(
 
         state.nudgeCounter = 0
         let turnCounter = 0
+        const allProtectedTools = config.tools.settings.protectedTools
+        const allowPruneInputs = new Set(config.tools.settings.allowPruneInputs)
 
         for (const msg of messages) {
             if (isMessageCompacted(state, msg)) {
@@ -49,8 +51,9 @@ export function syncToolCache(
                     state.lastToolPrune = true
                 } else {
                     state.lastToolPrune = false
-                    const allProtectedTools = config.tools.settings.protectedTools
-                    if (!allProtectedTools.includes(part.tool) && !isProtectedByTurn) {
+                    const isProtectedTool =
+                        allProtectedTools.includes(part.tool) && !allowPruneInputs.has(part.tool)
+                    if (!isProtectedTool && !isProtectedByTurn) {
                         state.nudgeCounter++
                     }
                 }
@@ -63,8 +66,8 @@ export function syncToolCache(
                     continue
                 }
 
-                const allProtectedTools = config.tools.settings.protectedTools
-                const isProtectedTool = allProtectedTools.includes(part.tool)
+                const isProtectedTool =
+                    allProtectedTools.includes(part.tool) && !allowPruneInputs.has(part.tool)
                 const tokenCount = isProtectedTool ? undefined : countToolTokens(part)
 
                 state.toolParameters.set(part.callID, {

@@ -65,6 +65,8 @@ export async function executePruneOperation(
     const currentParams = getCurrentParams(state, messages, logger)
 
     const toolIdList = state.toolIdList
+    const allProtectedTools = config.tools.settings.protectedTools
+    const allowPruneInputs = new Set(config.tools.settings.allowPruneInputs)
 
     const validNumericIds: number[] = []
     const skippedIds: string[] = []
@@ -92,8 +94,7 @@ export async function executePruneOperation(
             continue
         }
 
-        const allProtectedTools = config.tools.settings.protectedTools
-        if (allProtectedTools.includes(metadata.tool)) {
+        if (allProtectedTools.includes(metadata.tool) && !allowPruneInputs.has(metadata.tool)) {
             logger.debug("Rejecting prune request - protected tool", {
                 index,
                 id,
