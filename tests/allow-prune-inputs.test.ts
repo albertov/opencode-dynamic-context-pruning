@@ -91,6 +91,19 @@ test("config validates tools.settings.allowPruneInputs as string[]", () => {
         validationErrors.some((error) => error.key === "tools.settings.allowPruneInputs"),
         "Expected validation error for tools.settings.allowPruneInputs",
     )
+
+    const elementTypeErrors = validateConfigTypes({
+        tools: {
+            settings: {
+                allowPruneInputs: ["task", 123],
+            },
+        },
+    })
+
+    assert.ok(
+        elementTypeErrors.some((error) => error.key === "tools.settings.allowPruneInputs"),
+        "Expected validation error when allowPruneInputs contains non-string values",
+    )
 })
 
 test("buildPrunableToolsList includes protected tool when allowPruneInputs contains it", () => {
@@ -187,6 +200,58 @@ test("prune keeps output for protected tool in allowPruneInputs", () => {
     const toolPart = messages[0].parts[0] as any
     assert.equal(toolPart.state.input.prompt, "[Pruned input]")
     assert.equal(toolPart.state.output, "must remain visible")
+})
+
+test("regression: task in allowPruneInputs only prunes input, never output", () => {
+    const logger = new Logger(false)
+    const state = createSessionState()
+    const config = createConfig(
+        ["task"],
+        ["task", "todowrite", "todoread", "distill", "compress", "prune"],
+    )
+
+    state.prune.tools.set("call-task", 18)
+
+    const originalOutput = {
+        text: "keep this task output",
+        steps: ["one", "two"],
+    }
+
+    const messages: WithParts[] = [
+        {
+            info: {
+                id: "assistant-1",
+                role: "assistant",
+                time: { created: Date.now() },
+            } as any,
+            parts: [
+                {
+                    type: "tool",
+                    tool: "task",
+                    callID: "call-task",
+                    state: {
+                        status: "completed",
+                        input: {
+                            prompt: "sensitive task prompt",
+                            description: "sensitive task description",
+                        },
+                        output: originalOutput,
+                    },
+                } as any,
+            ],
+        },
+    ]
+
+    prune(state, logger, config, messages)
+
+    const toolPart = messages[0].parts[0] as any
+    assert.equal(toolPart.state.input.prompt, "[Pruned input]")
+    assert.equal(toolPart.state.input.description, "[Pruned input]")
+    assert.deepEqual(toolPart.state.output, originalOutput)
+    assert.notEqual(
+        toolPart.state.output,
+        "[Output removed to save context - information superseded or no longer needed]",
+    )
 })
 
 test("prune still removes output for allowPruneInputs tool when not protected", () => {

@@ -367,6 +367,18 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     actual: typeof tools.settings.allowPruneInputs,
                 })
             }
+            if (
+                Array.isArray(tools.settings.allowPruneInputs) &&
+                tools.settings.allowPruneInputs.some(
+                    (toolName: unknown) => typeof toolName !== "string",
+                )
+            ) {
+                errors.push({
+                    key: "tools.settings.allowPruneInputs",
+                    expected: "string[]",
+                    actual: "array with non-string values",
+                })
+            }
             if (tools.settings.contextLimit !== undefined) {
                 const isValidNumber = typeof tools.settings.contextLimit === "number"
                 const isPercentString =
